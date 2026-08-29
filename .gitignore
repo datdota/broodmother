@@ -1,0 +1,24 @@
+# deps / build
+node_modules/
+viewer/dist/
+*.log
+
+# local env / secrets — never commit a real env file (prod URLs, deploy targets, tokens live in these).
+# Catches .env, viewer/.env, .env.local, .env.production, deploy.env, *.env, etc. Only the committed
+# *.example templates are re-included below.
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+
+# Extracted / derived assets — served from the CDN in production, or regenerated locally by the pipeline.
+# We deliberately do NOT commit Valve-derived art. layers.json is viewer config, so it stays.
+viewer/public/models/
+viewer/public/terrain/
+!viewer/public/terrain/layers.json
+viewer/public/minimap.png
+
+# pipeline scratch + third-party tool binary (auto-downloaded)
+pipeline/out/
+pipeline/tools/

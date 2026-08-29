@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.datdota.com; connect-src 'self' blob: https://cdn.datdota.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'" />
+    <title>Hero Inspector</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: #11161d; overflow: hidden;
+        color: #d6dee7; font: 13px ui-monospace, Menlo, monospace; }
+      #app { position: fixed; inset: 0; }
+      #app canvas { display: block; width: 100%; height: 100%; }
+      .title { position: fixed; top: 12px; left: 14px; letter-spacing: .14em; color: #54bccb; }
+      .bar { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px;
+        align-items: center; background: rgba(6,9,13,.85); border: 1px solid #2c3a48; border-radius: 8px; padding: 6px 12px; }
+      .bar button, .bar select { background: #173042; color: #54bccb; border: 1px solid #54bccb; border-radius: 5px;
+        padding: 4px 10px; cursor: pointer; font: inherit; }
+      .bar select { min-width: 180px; }
+      #parts { position: fixed; top: 56px; right: 12px; width: 260px; max-height: calc(100% - 72px); overflow: auto;
+        background: rgba(6,9,13,.9); border: 1px solid #2c3a48; border-radius: 8px; padding: 10px 12px; }
+      #parts h2 { margin: 0 0 8px; font-size: 11px; letter-spacing: .14em; color: #54bccb; text-transform: uppercase;
+        display: flex; justify-content: space-between; }
+      #parts label { display: flex; gap: 8px; align-items: center; padding: 3px 0; cursor: pointer; }
+      #parts label.base { color: #63c46e; border-bottom: 1px solid #223040; margin-bottom: 4px; padding-bottom: 6px; }
+      #parts .sus { color: #e6b24c; }
+      #parts input { accent-color: #54bccb; }
+      #parts .hint { color: #8b96a1; margin-top: 8px; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="title">HERO INSPECTOR</div>
+    <div class="bar">
+      <button id="prev">◀</button>
+      <select id="hero"></select>
+      <button id="next">▶</button>
+      <button id="spin">⟳ spin</button>
+      <button id="copy">⧉ copy config</button>
+    </div>
+    <div id="parts">
+      <h2><span>Objects</span><span id="count"></span></h2>
+      <div id="list"></div>
+      <div class="hint">Left-drag spins the model · wheel zooms. Uncheck an object to hide it (amber = likely ability/prop), then "copy config" and paste it to me.</div>
+    </div>
+    <script type="module" src="/src/gallery.ts"></script>
+  </body>
+</html>

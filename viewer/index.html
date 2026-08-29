@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Content-Security-Policy: no inline/remote scripts (script-src 'self'), so injected markup can't run JS.
+         connect/img are limited to the app's own hosts + the datdota CDN/backend. Self-hosters: adjust the hosts. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://cdn.datdota.com; connect-src 'self' blob: https://cdn.datdota.com https://gc.datdota.com wss://gc.datdota.com; worker-src 'self' blob:; object-src 'none'; base-uri 'self'" />
+    <title>Dota Observer 3D</title>
+    <style>
+      :root {
+        --bg:#0a0d12; --panel:rgba(15,21,29,.86);
+        --chrome-1:#20262d; --chrome-2:#141a20; --chrome-edge:#3b4450;
+        --line:#202c38; --line-soft:#182029;
+        --ink:#d6dee7; --dim:#8b96a1; --faint:#5a636d;
+        --radiant:#63c46e; --radiant-hi:#8fe39c; --radiant-dim:#2f5b38;
+        --dire:#e35d54; --dire-hi:#f2938c;
+        --gold:#e6b24c; --cyan:#54bccb;
+        --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+        --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+      }
+      * { box-sizing:border-box; }
+      html,body { margin:0; height:100%; background:var(--bg); overflow:hidden; color:var(--ink); font-family:var(--sans); }
+      #app { position:fixed; inset:0; }
+      #app canvas { display:block; }
+      .hud { position:fixed; inset:0; pointer-events:none; font-family:var(--mono); }
+      .hud .click { pointer-events:auto; cursor:pointer; }
+
+      .pill { background:rgba(6,9,13,.72); padding:3px 9px; border-radius:6px; border:1px solid rgba(84,188,203,.12); backdrop-filter:blur(3px); }
+      .live { position:absolute; top:10px; left:12px; display:flex; align-items:center; gap:7px; font-size:11px; letter-spacing:.16em; }
+      .dot { width:7px; height:7px; border-radius:50%; background:var(--dire); box-shadow:0 0 8px var(--dire); animation:blink 1.6s infinite; }
+      @keyframes blink { 50%{opacity:.3;} }
+      .status { position:absolute; top:34px; left:12px; font-size:10px; color:var(--dim); letter-spacing:.05em; max-width:40vw; }
+      .controls { position:absolute; top:38px; right:12px; font-size:10px; letter-spacing:.1em; color:var(--dim); text-align:right; }
+      .controls kbd { color:var(--cyan); }
+      .fps { position:absolute; top:10px; right:12px; font-size:12px; font-weight:700; color:var(--cyan); font-variant-numeric:tabular-nums; letter-spacing:.04em; }
+      .brand { position:absolute; bottom:12px; left:50%; transform:translateX(-50%); pointer-events:auto; font-size:11px;
+        letter-spacing:.18em; text-transform:uppercase; color:var(--dim); text-decoration:none; opacity:.55; transition:opacity .15s,color .15s; }
+      .brand:hover { opacity:1; color:var(--cyan); }
+
+      /* --- top bar (bigger) --- */
+      .topbar { position:absolute; top:0; left:50%; transform:translateX(-50%); display:flex; align-items:stretch; gap:14px;
+        background:linear-gradient(180deg,rgba(8,11,15,.95),rgba(8,11,15,.6)); padding:7px 16px 9px; border-radius:0 0 10px 10px; border:1px solid var(--line); border-top:none; }
+      .team-row { display:flex; gap:5px; }
+      .por { width:60px; height:44px; border-radius:3px; background:linear-gradient(150deg,#28323f,#141b23); position:relative; border-top:3px solid var(--radiant); overflow:hidden; }
+      .team-row.d .por { border-top-color:var(--dire); }
+      .por img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+      .por > i.hp { position:absolute; left:0; bottom:0; height:4px; width:100%; background:var(--radiant); z-index:2; transition:width .2s; }
+      .team-row.d .por > i.hp { background:var(--dire); }
+      .por.dead { filter:grayscale(1) brightness(.5); }
+      .por.dead > i.hp { background:#555; }
+      .por.sel { outline:2px solid var(--cyan); outline-offset:-2px; }
+      .center { display:flex; align-items:center; gap:16px; padding:0 8px; }
+      .sc { font-family:var(--sans); font-weight:800; font-size:30px; font-variant-numeric:tabular-nums; }
+      .sc.r{color:var(--radiant);} .sc.d{color:var(--dire);}
+      .clk { text-align:center; } .clk .t { font-family:var(--sans); font-weight:800; font-size:22px; font-variant-numeric:tabular-nums; }
+      .clk .d { font-size:10px; letter-spacing:.14em; color:var(--gold); text-transform:uppercase; }
+      .nw { position:absolute; top:54px; left:50%; transform:translateX(-50%); width:340px; height:6px; border-radius:3px; overflow:hidden; display:flex; border:1px solid rgba(0,0,0,.5); }
+      .nw i.r{ background:var(--radiant);} .nw i.d{ background:var(--dire);}
+      .nwlbl { position:absolute; top:62px; left:50%; transform:translateX(-50%); font-size:11px; color:var(--gold); letter-spacing:.08em; }
+
+      /* --- bottom console (bigger, type-aware) --- */
+      .console { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; align-items:stretch; height:150px;
+        background:linear-gradient(180deg,var(--chrome-1),var(--chrome-2)); border:1px solid var(--chrome-edge); border-radius:10px;
+        box-shadow:0 -2px 0 rgba(125,106,62,.35) inset, 0 10px 30px -8px #000; padding:10px 12px; gap:12px; min-width:380px; }
+      .console.hide { display:none; }
+      .cname { position:absolute; top:-18px; left:100px; font-size:12px; letter-spacing:.16em; color:var(--ink); text-transform:uppercase; }
+      .cport { width:100px; border-radius:7px; background:linear-gradient(150deg,#2a3546,#131a24); border:1px solid var(--radiant-dim); position:relative; overflow:hidden; }
+      .cport img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+      .cport::after{ content:"◈"; position:absolute; inset:0; display:grid; place-items:center; color:var(--radiant); opacity:.35; font-size:30px; }
+      .cmid { display:flex; flex-direction:column; justify-content:center; gap:7px; width:290px; }
+      /* stat chips + ability row in the console */
+      .cstats { display:flex; gap:10px; font-size:12px; align-items:center; font-variant-numeric:tabular-nums; }
+      .cstats b { font-weight:800; }
+      .cstats .str{color:#e0796b;} .cstats .agi{color:#7fd08a;} .cstats .int{color:#6fa8e6;} .cstats .ms{color:var(--dim);}
+      .cabil { display:flex; gap:4px; }
+      .cabil.hide { display:none; }
+      .ab { position:relative; width:34px; height:34px; border-radius:4px; overflow:hidden; background:#0c1219; border:1px solid #2a3543; flex:none; }
+      .ab img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+      .ab.unlearned { filter:grayscale(1) brightness(.45); }
+      .ab .cd { position:absolute; inset:0; background:rgba(4,8,12,.62); color:#fff; display:flex; align-items:center; justify-content:center;
+        font-size:12px; font-weight:800; font-family:var(--sans); text-shadow:0 1px 2px #000; }
+      .ab .lv { position:absolute; left:0; right:0; bottom:0; height:3px; display:flex; gap:1px; padding:0 1px; }
+      .ab .lv i { flex:1; background:#3a4658; } .ab .lv i.on { background:var(--gold); }
+      .rowbar { display:flex; align-items:center; gap:6px; }
+      .barwrap { flex:1; height:15px; background:#0a0f15; border:1px solid #000; border-radius:2px; overflow:hidden; position:relative; }
+      .barwrap > i { display:block; height:100%; }
+      .barwrap .hp{ background:linear-gradient(180deg,#84d884,#4fa64f); }
+      .barwrap .mp{ background:linear-gradient(180deg,#6f9fe6,#3f66c8); }
+      .barnum { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:10px; color:#eaf1e7; text-shadow:0 1px 1px #000; }
+      .citems { display:grid; grid-template-columns:repeat(3,30px); grid-auto-rows:30px; gap:3px; align-content:center; }
+      .citems.hide { display:none; }
+      .citems i { border-radius:3px; background:#0c1219; border:1px solid #2a3543; font-size:7px; color:var(--dim); overflow:hidden; display:flex; align-items:center; justify-content:center; text-align:center; }
+      .citems i.f { background:linear-gradient(150deg,#38445a,#1a2230); border-color:#46536a; color:#c7d0da; }
+
+      /* --- minimap (bigger, real texture) --- */
+      .minimap { position:absolute; bottom:10px; left:12px; width:375px; height:375px; border-radius:8px; background:#0b1017; border:1px solid var(--chrome-edge); box-shadow:0 8px 24px -8px #000; overflow:hidden; pointer-events:auto; cursor:crosshair; user-select:none; -webkit-user-select:none; }
+      /* pointer-events:none + no native image drag: clicks fall through to the .minimap scrub handler instead of starting an image ghost-drag */
+      .minimap img { position:absolute; inset:0; width:100%; height:100%; object-fit:fill; opacity:.92; pointer-events:none; -webkit-user-drag:none; user-select:none; }
+      .minimap svg { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+      .mm-resize { position:absolute; top:0; right:0; width:18px; height:18px; cursor:nesw-resize;
+        background:linear-gradient(225deg,var(--cyan) 0 5px,transparent 5px), linear-gradient(225deg,var(--cyan) 0 9px,transparent 9px);
+        background-size:100% 100%; opacity:.55; }
+      .mm-resize:hover { opacity:1; }
+      .econ { position:absolute; bottom:16px; right:16px; display:flex; align-items:center; gap:8px; }
+      .econ .gold { font-family:var(--sans); font-weight:800; color:var(--gold); font-size:18px; font-variant-numeric:tabular-nums; display:flex; align-items:center; gap:5px; }
+      .econ .gc { width:13px; height:13px; border-radius:50%; background:var(--gold); box-shadow:0 0 6px rgba(230,178,76,.5); }
+
+      /* --- stats panel (top-left) --- */
+      .statsp { position:absolute; top:66px; left:12px; width:264px; background:rgba(8,11,15,.86); border:1px solid var(--line); border-radius:9px; padding:9px; backdrop-filter:blur(3px); }
+      .statsp .hd { display:flex; gap:6px; margin-bottom:7px; }
+      .statsp select { flex:1; background:#0c1219; color:var(--cyan); border:1px solid #223040; border-radius:5px; padding:6px 8px; font:inherit; font-size:12px; letter-spacing:.06em; text-transform:uppercase; cursor:pointer; }
+      .statsp #statmode { background:#173042; color:var(--cyan); border:1px solid #2a4658; border-radius:5px; padding:6px 9px; font:inherit; font-size:11px; letter-spacing:.05em; cursor:pointer; white-space:nowrap; }
+      .statsp .srow { display:flex; align-items:center; gap:7px; padding:4px 6px; border-radius:4px; font-size:13px; margin-bottom:2px; border-left:3px solid transparent; }
+      .statsp .srow.r { background:linear-gradient(90deg,rgba(99,196,110,.22),rgba(99,196,110,.05)); border-left-color:var(--radiant); }
+      .statsp .srow.d { background:linear-gradient(90deg,rgba(227,93,84,.22),rgba(227,93,84,.05)); border-left-color:var(--dire); }
+      .statsp .srow.sel { outline:1px solid var(--cyan); }
+      .statsp .srow .pic { width:30px; height:20px; border-radius:2px; background:#1a2230; object-fit:cover; flex:none; }
+      .statsp .srow .nm { flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; color:var(--ink); }
+      .statsp .srow .val { font-variant-numeric:tabular-nums; font-weight:800; color:#fff; }
+
+      /* --- scoreboard overlay (toggle 's') --- */
+      .scoreboard { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:min(680px,92vw); max-height:88vh; overflow:auto;
+        background:rgba(10,14,20,.96); border:1px solid var(--chrome-edge); border-radius:12px; box-shadow:0 20px 60px -10px #000; padding:6px 0; }
+      .scoreboard.hide { display:none; }
+      .sb-team { display:flex; align-items:center; gap:10px; padding:8px 16px; font-weight:800; font-size:16px; }
+      .sb-team.r { color:var(--radiant); } .sb-team.d { color:var(--dire); }
+      .sb-team .sb-score { margin-left:auto; font-size:22px; }
+      table.sb { width:100%; border-collapse:collapse; font-size:13px; }
+      table.sb th { font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); font-weight:600; padding:2px 8px; text-align:right; }
+      table.sb th.l { text-align:left; }
+      table.sb td { padding:5px 8px; text-align:right; font-variant-numeric:tabular-nums; border-top:1px solid var(--line-soft); }
+      table.sb td.l { text-align:left; }
+      table.sb tr.click:hover { background:rgba(84,188,203,.1); }
+      table.sb .hpic { width:34px; height:22px; border-radius:2px; object-fit:cover; background:#1a2230; vertical-align:middle; margin-right:7px; }
+      table.sb .pname { color:var(--ink); } table.sb .hname { color:var(--dim); font-size:11px; }
+      table.sb .gold { color:var(--gold); font-weight:700; }
+      .sb-hint { text-align:center; color:var(--faint); font-size:11px; padding:6px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <div class="hud">
+      <div class="live pill"><span class="dot"></span> <span id="livelbl">CONNECTING</span></div>
+      <div class="status pill" id="status"></div>
+      <div class="fps pill" id="fps">– fps</div>
+      <div class="controls pill">scroll <kbd>zoom</kbd> · drag <kbd>pan</kbd> · click <kbd>follow</kbd> · <kbd>s</kbd> scoreboard</div>
+
+      <div class="topbar">
+        <div class="team-row r" id="rrow"></div>
+        <div class="center">
+          <div class="sc r" id="scR">0</div>
+          <div class="clk"><div class="t" id="clk">0:00</div><div class="d" id="day">◐</div></div>
+          <div class="sc d" id="scD">0</div>
+        </div>
+        <div class="team-row d" id="drow"></div>
+      </div>
+      <div class="nw"><i class="r" id="nwR" style="width:50%"></i><i class="d" id="nwD" style="width:50%"></i></div>
+      <div class="nwlbl" id="nwlbl"></div>
+
+      <div class="statsp">
+        <div class="hd">
+          <select id="statsel" class="click">
+            <option value="kda">K/D/A</option>
+            <option value="netWorth">Net Worth</option>
+            <option value="gpm">GPM</option>
+            <option value="xpm">XPM</option>
+            <option value="lastHits">Last Hits</option>
+            <option value="denies">Denies</option>
+            <option value="level">Level</option>
+          </select>
+          <button id="statmode" class="click" title="cycle view">Both</button>
+        </div>
+        <div id="statrows"></div>
+      </div>
+
+      <div class="minimap" id="minimap">
+        <img id="minibg" alt="" draggable="false" /><!-- src set from config (assetUrl) in hud.ts -->
+        <svg viewBox="0 0 250 250" id="mini" preserveAspectRatio="none"></svg>
+        <div class="mm-resize click" id="mmresize" title="drag to resize"></div>
+      </div>
+
+      <div class="console hide" id="console">
+        <div class="cname" id="cname"></div>
+        <div class="cport" id="cport"></div>
+        <div class="cmid">
+          <div class="rowbar"><div class="barwrap"><i class="hp" id="chp"></i><span class="barnum" id="chpNum"></span></div></div>
+          <div class="rowbar"><div class="barwrap"><i class="mp" id="cmp"></i><span class="barnum" id="cmpNum"></span></div></div>
+          <div class="cstats" id="cstats"></div>
+          <div class="cabil" id="cabil"></div>
+        </div>
+        <div class="citems" id="citems"></div>
+      </div>
+
+      <div class="econ"><div class="gold"><span class="gc"></span><span id="gold">0</span></div></div>
+
+      <div class="scoreboard hide" id="scoreboard"></div>
+
+      <a class="brand" href="http://github.com/datdota/broodmother" target="_blank" rel="noopener noreferrer">broodmother ↗</a>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

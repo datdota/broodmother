@@ -1,0 +1,136 @@
+syntax = "proto3";
+
+import "entity_frame.proto";
+
+option java_multiple_files = true;
+option java_package = "com.datdota.spectate.proto.stream";
+
+package spectate;
+
+// Efficient, versioned entity stream ("v2"). The full-frame protocol in entity_frame.proto (/ws/entities) is
+// left intact; this is the additive, delta-encoded protocol served at /ws/stream and shared by the web client
+// and the TUI. The design partitions state by change-rate and never resends stable data:
+//   - identity (type/team/name/hero) is sent once when a unit spawns (UnitIdent),
+//   - volatile transform+vitals ride every tick, columnar for compactness (Transforms),
+//   - slow fields (level/max hp/items/respawn) are sent only when they change (UnitSlow),
+//   - scoreboard and combat-log events ride their own slower tiers.
+// Delivery is over TCP/WebSocket (ordered + reliable), so no ack/PVS machinery is needed: a keyframe makes a
+// joining client whole, then deltas carry only what changed. String names are interned via Catalog.
+
+// One Batch per WS binary frame — the messages that apply to a single server tick, applied atomically in order.
+message Batch {
+  repeated StreamMsg msgs = 1;
+}
+
+message StreamMsg {
+  oneof body {
+    Hello    hello    = 1;
+    Catalog  catalog  = 2;
+    Keyframe keyframe = 3;
+    Delta    delta    = 4;
+    Stats    stats    = 5;
+    Events   events   = 6;
+    Projectiles projectiles = 7;
+  }
+}
+
+// Tracking projectiles launched / ended this tick (reuses spectate.Projectile from entity_frame.proto).
+message Projectiles {
+  repeated Projectile spawns  = 1;
+  repeated uint32     destroys = 2 [packed = true];
+}
+
+// First message on connect: protocol version + game tick rate (for client-side countdowns).
+message Hello {
+  uint32 version   = 1;  // = 2
+  uint32 tick_rate = 2;  // server ticks per second (30)
+}
+
+// Append-only string interning table. `base` is the id of names[0]; ids are stable for the session. id 0 is
+// reserved for "no string", so the first real id is 1.
+message Catalog {
+  uint32 base           = 1;
+  repeated string names = 2;
+}
+
+// Per-unit identity — sent once when a handle first appears (in a Keyframe or Delta.spawns). Rarely changes.
+message UnitIdent {
+  uint32   handle      = 1;
+  UnitType type        = 2;
+  uint32   team        = 3;  // 2 = radiant, 3 = dire, other = neutral
+  uint32   name_id     = 4;  // -> Catalog (unit_name); 0 = none
+  uint32   hero_id     = 5;
+  uint32   player_slot = 6;  // 0..9; 255 = none
+  float    model_scale = 7;  // per-unit render scale (m_flScale); sent with identity, re-sent if it changes
+}
+
+// Volatile per-tick transform + vitals, columnar (structure-of-arrays, packed) keyed by parallel `handles`.
+// Only units whose values changed this tick appear (all present units in a Keyframe).
+message Transforms {
+  repeated uint32 handles = 1 [packed = true];
+  repeated sint32 xs      = 2 [packed = true];  // world coords (see Coordinates.java)
+  repeated sint32 ys      = 3 [packed = true];
+  repeated uint32 yaws    = 4 [packed = true];  // facing, 0..359 degrees
+  repeated sint32 hps     = 5 [packed = true];
+  repeated sint32 max_hps = 6 [packed = true];
+  repeated sint32 mps     = 7 [packed = true];
+  repeated uint32 flags   = 8 [packed = true];  // bit0 = alive
+  repeated uint32 activities = 9 [packed = true];  // heroes: m_NetworkActivity (0 for units we don't animate)
+}
+
+// Slow-changing per-unit fields — sent only when they change. respawn_time is the countdown at the moment it
+// changed; the client keeps counting it down from game_time deltas rather than the server resending it.
+message UnitSlow {
+  uint32   handle       = 1;
+  uint32   level        = 2;
+  int32    max_mp       = 3;
+  float    respawn_time = 4;
+  repeated uint32 item_ids = 5 [packed = true];  // -> Catalog; 6 slots, 0 = empty
+  repeated UnitAbility abilities = 6;  // heroes: castable abilities (name interned via Catalog)
+  int32 strength   = 7;
+  int32 agility    = 8;
+  int32 intellect  = 9;
+  int32 move_speed = 10;
+}
+
+// One ability in the slow tier. cooldown_end is absolute game-time (seconds) it's ready — changes only on cast,
+// so it stays slow; the client counts down locally. 0 = ready.
+message UnitAbility {
+  uint32 name_id         = 1;  // -> Catalog
+  int32  level           = 2;
+  float  cooldown_end    = 3;
+  float  cooldown_length = 4;
+}
+
+// Full state: makes a joining/reconnecting client whole in one shot. Sent on connect and every ~5s as resync.
+message Keyframe {
+  uint32   server_tick        = 1;
+  int32    game_time          = 2;
+  bool     game_live          = 3;
+  repeated UnitIdent  idents  = 4;  // every present unit's identity
+  Transforms transforms       = 5;  // every present unit's transform + vitals
+  repeated UnitSlow   slow    = 6;  // every present unit's slow-state
+  MatchLite match             = 7;
+}
+
+// Changed-only update for one tick.
+message Delta {
+  uint32   server_tick       = 1;
+  int32    game_time         = 2;
+  bool     game_live         = 3;
+  repeated UnitIdent spawns  = 4;  // handles new since the last message
+  Transforms transforms      = 5;  // handles whose transform/vitals changed
+  repeated UnitSlow  slow    = 6;  // handles whose slow-state changed
+  repeated uint32 despawns   = 7 [packed = true];  // handles gone since the last message
+  MatchLite match            = 8;  // present only when it changed
+}
+
+// Scoreboard, slow tier (~1/s).
+message Stats {
+  repeated PlayerStat players = 1;
+}
+
+// Combat-log events as they occur.
+message Events {
+  repeated GameEvent events = 1;
+}

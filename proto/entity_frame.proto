@@ -1,0 +1,125 @@
+syntax = "proto3";
+
+option java_multiple_files = true;
+option java_package = "com.datdota.spectate.proto";
+
+package spectate;
+
+// One broadcast-fidelity snapshot of the live entity table, streamed to spectator clients. Full frames for now
+// (every unit each frame); delta-encoding is a later fidelity phase. `handle` is the stable per-unit id the
+// consumer diffs/interpolates on and uses to follow a unit.
+message EntityFrame {
+  uint32 server_tick = 1;   // clarity server tick (monotonic; consumer de-dupes/orders on this)
+  int32  game_time   = 2;   // seconds since horn; negative during pre-game
+  bool   game_live   = 3;   // heroes present in the world (match underway)
+  repeated Unit units = 4;
+  MatchLite match    = 5;
+  repeated PlayerStat players = 6;  // per-slot economy/combat (from PlayerResource + team data)
+  repeated GameEvent events = 7;    // combat-log events new since the previous frame
+  repeated Projectile projectiles = 8;       // tracking projectiles launched this frame (TE_Projectile)
+  repeated uint32 projectile_destroys = 9;   // projectile handles that ended this frame
+}
+
+// A tracking projectile (ranged attack or tracking ability): flies from source -> target unit at move_speed.
+message Projectile {
+  uint32 handle    = 1;  // stable id; matched by projectile_destroys
+  uint32 source    = 2;  // launching unit handle
+  uint32 target    = 3;  // target unit handle (0 = none, use target_x/y)
+  sint32 target_x  = 4;  // world coords when there is no target unit
+  sint32 target_y  = 5;
+  uint32 speed     = 6;  // units/sec (tracking move_speed, or linear max_speed)
+  bool   is_attack = 7;  // true = auto-attack projectile, false = ability
+  // linear / skillshot projectiles (CreateLinearProjectile): fly from origin along velocity for distance
+  bool   linear    = 8;
+  sint32 origin_x  = 9;
+  sint32 origin_y  = 10;
+  sint32 vel_x     = 11; // velocity vector (units/sec); client normalizes for direction
+  sint32 vel_y     = 12;
+  uint32 distance  = 13; // total travel distance (units)
+}
+
+// A notable combat-log event, with display text built server-side so the consumer just renders it.
+message GameEvent {
+  int32  time = 1;   // game clock seconds
+  string kind = 2;   // "kill" | "building" | "roshan" | "lasthit" | "deny"
+  string text = 3;   // e.g. "Kez killed Jakiro" (empty for lasthit/deny)
+  sint32 x    = 4;   // world coords of the event (lasthit/deny: the death location); 0 = none
+  sint32 y    = 5;
+}
+
+// Per-player scoreboard stats — counters, not positions, so the consumer takes them as-is (no interpolation).
+message PlayerStat {
+  uint32 slot      = 1;   // 0..9 (0-4 radiant, 5-9 dire)
+  uint32 team      = 2;   // 2 = radiant, 3 = dire
+  uint32 hero_id   = 3;
+  string name      = 4;
+  uint32 kills     = 5;
+  uint32 deaths    = 6;
+  uint32 assists   = 7;
+  uint32 last_hits = 8;
+  uint32 denies    = 9;
+  uint32 net_worth = 10;
+  uint32 gold      = 11;
+  uint32 gpm       = 12;
+  uint32 xpm       = 13;
+  uint32 buyback_cooldown = 14;  // seconds until buyback is off cooldown (0 = ready)
+}
+
+enum UnitType {
+  UNIT_UNKNOWN = 0;
+  HERO         = 1;
+  ILLUSION     = 2;
+  CREEP        = 3;   // lane creep / siege
+  NEUTRAL      = 4;
+  WARD_OBS     = 5;
+  WARD_SEN     = 6;
+  BUILDING     = 7;   // tower / barracks / fort / generic building
+  COURIER      = 8;
+  ROSHAN       = 9;
+}
+
+message Unit {
+  uint32   handle  = 1;   // clarity entity handle: stable id for diffing / follow-a-unit
+  UnitType type    = 2;
+  sint32   x       = 3;   // world coords (unit-accurate; see Coordinates.java)
+  sint32   y       = 4;
+  uint32   yaw     = 5;   // facing, 0..359 degrees
+  uint32   team    = 6;   // 2 = radiant, 3 = dire, other = neutral
+  int32    hp      = 7;
+  int32    max_hp  = 8;
+  uint32   flags   = 9;   // bit0 = alive
+
+  // heroes / named units only (omitted for anonymous creeps to keep frames small)
+  uint32 hero_id     = 10;
+  uint32 player_slot = 11;  // 0..9 for "follow player"; 255 = none
+  uint32 level       = 12;
+  int32  mp          = 13;
+  int32  max_mp      = 14;
+  string unit_name   = 15;  // e.g. npc_dota_hero_jakiro (heroes/buildings/wards)
+  float  respawn_time = 16; // heroes: seconds until respawn (0 = alive)
+  repeated string items = 17; // heroes: inventory item names, slots 0-5 ("" = empty)
+  float  model_scale = 18;  // CBodyComponent.m_flScale — per-unit render scale (1.0 = default; Tiny etc. differ)
+
+  // heroes only: castable abilities (talents/hidden sub-abilities excluded) + primary attributes + move speed
+  repeated Ability abilities = 19;
+  int32 strength   = 20;
+  int32 agility    = 21;
+  int32 intellect  = 22;
+  int32 move_speed = 23;
+  uint32 activity  = 24;  // heroes: m_NetworkActivity (1500 idle, 1502 run, 1503/1504 attack, 1506+ cast)
+}
+
+// One castable ability. cooldown_end is the absolute game-time (seconds) the ability comes off cooldown, so it
+// only changes on cast (stays in the slow tier) and the client counts it down locally; 0 = ready.
+message Ability {
+  string name            = 1;  // e.g. hoodwink_acorn_shot
+  int32  level           = 2;  // 0 = unlearned
+  float  cooldown_end    = 3;
+  float  cooldown_length = 4;
+}
+
+message MatchLite {
+  uint32 radiant_score = 1;
+  uint32 dire_score    = 2;
+  bool   day_time      = 3;
+}

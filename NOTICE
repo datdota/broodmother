@@ -1,0 +1,27 @@
+broodmother — web-based 3D Dota 2 spectator client
+Copyright (C) 2026 Bernard Steenhuisen
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See the LICENSE file for the full text.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+----------------------------------------------------------------------------
+Third-party assets — NOT covered by this license
+----------------------------------------------------------------------------
+
+This license covers the SOURCE CODE in this repository only.
+
+Dota 2 and all related game assets — models, textures, terrain, map data, hero
+and item art, and the "Dota" name and logo — are the property of Valve
+Corporation. They are NOT included in, distributed by, or licensed under this
+repository. The asset-extraction pipeline in `pipeline/` reads those assets from
+your own local Dota 2 installation; you are responsible for your use of them
+under Valve's terms.
+
+This project is not affiliated with, endorsed by, or sponsored by Valve
+Corporation.

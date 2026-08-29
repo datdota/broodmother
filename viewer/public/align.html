@@ -1,0 +1,136 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Terrain Align</title>
+<style>
+  :root { color-scheme: dark; }
+  html,body { margin:0; height:100%; background:#0c1016; color:#cfe0f0; font:13px/1.5 ui-monospace,Menlo,monospace; overflow:hidden; }
+  #cv { position:fixed; inset:0; cursor:crosshair; }
+  #panel { position:fixed; top:10px; right:10px; width:290px; max-height:96vh; overflow:auto; background:rgba(10,14,20,.92);
+    border:1px solid #2a3644; border-radius:8px; padding:12px 14px; backdrop-filter:blur(4px); }
+  h1 { font-size:14px; margin:0 0 8px; color:#fff; }
+  .row { display:flex; align-items:center; gap:8px; margin:5px 0; }
+  .row label { width:52px; color:#8fa3b8; }
+  input[type=range] { flex:1; }
+  input[type=number] { width:78px; background:#0c1016; color:#cfe0f0; border:1px solid #2a3644; border-radius:4px; padding:2px 4px; }
+  button { background:#1a2632; color:#cfe0f0; border:1px solid #35506a; border-radius:5px; padding:5px 9px; cursor:pointer; font:inherit; }
+  button:hover { background:#22384c; }
+  button.go { background:#1d5b3a; border-color:#2f8f5b; }
+  #status { color:#ffd24a; min-height:18px; margin:6px 0; }
+  textarea { width:100%; height:150px; background:#070b10; color:#8fe; border:1px solid #2a3644; border-radius:5px; font:11px ui-monospace,monospace; box-sizing:border-box; }
+  .hint { color:#6f8296; font-size:11px; margin:6px 0; }
+  hr { border:0; border-top:1px solid #223; margin:10px 0; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div id="panel">
+  <h1>Terrain Align</h1>
+  <div class="hint">Overlay = baked heightmap (blue = low/river/Rosh pits). Line it up onto the overview.</div>
+  <button class="go" id="p2">▶ 2-point align (Rosh pits)</button>
+  <div id="status">manual mode — drag to move, wheel to scale</div>
+  <hr>
+  <div class="row"><label>opacity</label><input type="range" id="op" min="0" max="1" step="0.02" value="0.6"></div>
+  <div class="row"><label>rotate</label><button id="rccw">⟲ 90</button><button id="rcw">90 ⟳</button></div>
+  <div class="row"><label>θ°</label><input type="number" id="th" step="0.5"></div>
+  <div class="row"><label>scaleX</label><input type="number" id="sx" step="0.05"></div>
+  <div class="row"><label>scaleY</label><input type="number" id="sy" step="0.05"></div>
+  <div class="row"><label>offX</label><input type="number" id="ox" step="5"></div>
+  <div class="row"><label>offY</label><input type="number" id="oy" step="5"></div>
+  <div class="hint">drag = move · wheel = scale both · shift+wheel = scaleX · alt+wheel = scaleY</div>
+  <hr>
+  <button id="copy">📋 Copy affine for Claude</button>
+  <textarea id="out" readonly></textarea>
+</div>
+<script>
+// baked heightmap grid + hd_740 overview calibration (world -> image px: px=cx+k*wx, py=cy-k*wy)
+const GW=512, GH=544, CX=1988, CY=2049, K=0.211;
+const cv=document.getElementById("cv"), ctx=cv.getContext("2d");
+const ov=new Image(), hill=new Image();
+let ovLoaded=false, hillLoaded=false;
+ov.onload=()=>{ovLoaded=true; init();}; hill.onload=()=>{hillLoaded=true; init();};
+// asset base: ?assets=<url> overrides (e.g. the CDN in prod); empty = same-origin (local dev serving public/)
+const ASSETS=new URLSearchParams(location.search).get("assets")??"";
+ov.src=ASSETS+"/terrain/overview.jpg"; hill.src=ASSETS+"/terrain/hillshade.png";
+
+// transform grid(col,row) -> overview native px, centre-based
+let T={th:0, sx:8, sy:8, ox:0, oy:0};
+let disp=1; // display px per native px
+function fit(){ cv.width=innerWidth; cv.height=innerHeight; disp=Math.min(cv.width/ov.width, cv.height/ov.height); }
+function init(){ if(!ovLoaded||!hillLoaded) return; if(!T.ox){ T.ox=ov.width/2; T.oy=ov.height/2; } fit(); syncInputs(); draw(); }
+addEventListener("resize", ()=>{ if(ovLoaded){ fit(); draw(); } });
+
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.setTransform(disp,0,0,disp,0,0);
+  ctx.drawImage(ov,0,0);
+  const th=T.th*Math.PI/180, a=Math.cos(th)*T.sx, d=Math.sin(th)*T.sx, b=-Math.sin(th)*T.sy, e=Math.cos(th)*T.sy;
+  const c=T.ox - a*GW/2 - b*GH/2, f=T.oy - d*GW/2 - e*GH/2;
+  ctx.save(); ctx.globalAlpha=+document.getElementById("op").value; ctx.transform(a,d,b,e,c,f); ctx.drawImage(hill,0,0); ctx.restore();
+  updateOut();
+}
+
+// world -> grid affine (col=A*wx+B*wy+C, row=D*wx+E*wy+F) from current T + calib
+function affine(){
+  const th=T.th*Math.PI/180, a=Math.cos(th)*T.sx, d=Math.sin(th)*T.sx, b=-Math.sin(th)*T.sy, e=Math.cos(th)*T.sy;
+  const c=T.ox - a*GW/2 - b*GH/2, f=T.oy - d*GW/2 - e*GH/2;
+  const det=a*e-b*d;
+  const A=e*K/det, B=b*K/det, C=(e*(CX-c)-b*(CY-f))/det;
+  const D=-d*K/det, E=-a*K/det, F=(-d*(CX-c)+a*(CY-f))/det;
+  return {A,B,C,D,E,F};
+}
+function updateOut(){
+  const m=affine();
+  document.getElementById("out").value = JSON.stringify({GW,GH,
+    A:+m.A.toFixed(6),B:+m.B.toFixed(6),C:+m.C.toFixed(3),D:+m.D.toFixed(6),E:+m.E.toFixed(6),F:+m.F.toFixed(3),
+    _params:{th:T.th,sx:+T.sx.toFixed(4),sy:+T.sy.toFixed(4),ox:Math.round(T.ox),oy:Math.round(T.oy)}}, null, 1);
+}
+function syncInputs(){ for(const k of ["th","sx","sy","ox","oy"]) document.getElementById(k).value = +T[k].toFixed(k==="th"?1:4); }
+for(const k of ["th","sx","sy","ox","oy"]) document.getElementById(k).oninput=(ev)=>{ T[k]=+ev.target.value||0; draw(); };
+document.getElementById("op").oninput=draw;
+document.getElementById("rcw").onclick=()=>{ T.th+=90; syncInputs(); draw(); };
+document.getElementById("rccw").onclick=()=>{ T.th-=90; syncInputs(); draw(); };
+document.getElementById("copy").onclick=()=>{ navigator.clipboard.writeText(document.getElementById("out").value); document.getElementById("status").textContent="copied ✓ — paste to Claude"; };
+
+// drag to move, wheel to scale
+let drag=false, lx=0, ly=0;
+cv.addEventListener("pointerdown",(e)=>{ if(mode) return click2(e); drag=true; lx=e.clientX; ly=e.clientY; });
+addEventListener("pointerup",()=>drag=false);
+addEventListener("pointermove",(e)=>{ if(!drag) return; T.ox+=(e.clientX-lx)/disp; T.oy+=(e.clientY-ly)/disp; lx=e.clientX; ly=e.clientY; syncInputs(); draw(); });
+cv.addEventListener("wheel",(e)=>{ e.preventDefault(); const f=e.deltaY<0?1.05:1/1.05; if(!e.shiftKey&&!e.altKey){T.sx*=f;T.sy*=f;} else if(e.shiftKey)T.sx*=f; else T.sy*=f; syncInputs(); draw(); },{passive:false});
+
+// 2-point alignment: click Rosh pit on overview, then on hillshade, x2 -> solve similarity
+let mode=0; const pts={ov:[],hl:[]};
+document.getElementById("p2").onclick=()=>{ mode=1; pts.ov=[]; pts.hl=[]; setStatus(); drawMode(); };
+function setStatus(){ const s=document.getElementById("status");
+  s.textContent = mode===1?"click Rosh pit #1 on OVERVIEW":mode===2?"click pit #1 on HILLSHADE":mode===3?"click Rosh pit #2 on OVERVIEW":mode===4?"click pit #2 on HILLSHADE":"manual mode — drag to move, wheel to scale"; }
+// show only overview (odd steps) or only hillshade fit (even steps) for unambiguous clicks
+let hlScale=1;
+function drawMode(){
+  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height);
+  if(mode===1||mode===3){ ctx.setTransform(disp,0,0,disp,0,0); ctx.drawImage(ov,0,0); }
+  else if(mode===2||mode===4){ hlScale=Math.min(cv.width/GW,cv.height/GH); ctx.setTransform(hlScale,0,0,hlScale,0,0); ctx.drawImage(hill,0,0); }
+}
+function click2(e){
+  const mx=e.clientX, my=e.clientY;
+  if(mode===1||mode===3){ pts.ov.push([mx/disp, my/disp]); mode++; }
+  else if(mode===2||mode===4){ pts.hl.push([mx/hlScale, my/hlScale]); mode++; }
+  if(mode>4){ solve(); mode=0; setStatus(); draw(); return; }
+  setStatus(); drawMode();
+}
+function solve(){
+  const [h1,h2]=pts.hl, [o1,o2]=pts.ov;
+  const vh=[h2[0]-h1[0],h2[1]-h1[1]], vo=[o2[0]-o1[0],o2[1]-o1[1]];
+  const s=Math.hypot(vo[0],vo[1])/Math.hypot(vh[0],vh[1]);
+  const th=Math.atan2(vo[1],vo[0])-Math.atan2(vh[1],vh[0]);
+  T.sx=s; T.sy=s; T.th=th*180/Math.PI;
+  // grid centre maps to: o1 + s R (gc - h1)
+  const gc=[GW/2-h1[0], GH/2-h1[1]];
+  T.ox=o1[0]+s*(Math.cos(th)*gc[0]-Math.sin(th)*gc[1]);
+  T.oy=o1[1]+s*(Math.sin(th)*gc[0]+Math.cos(th)*gc[1]);
+  syncInputs();
+}
+</script>
+</body>
+</html>

@@ -15,7 +15,6 @@ const BG = 0x0a0d12;
 
 export function createStage(container: HTMLElement): Stage {
   const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(BG, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.25;
@@ -60,7 +59,13 @@ export function createStage(container: HTMLElement): Stage {
 
   function resize() {
     const r = container.getBoundingClientRect();
-    renderer.setSize(r.width, r.height, false);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2)); // re-read: browser zoom changes DPR
+    // Let three.js write the canvas's inline CSS size (setSize's default third arg). index.html styles the
+    // canvas `display:block` with no width/height, so otherwise it lays out at the DPR-scaled buffer size —
+    // 2x the container on retina, cropping the view to its top-left quarter (a followed unit renders at the
+    // centre, i.e. past the visible corner). gallery.ts may pass `false` only because heroes.html sizes its
+    // canvas in CSS.
+    renderer.setSize(r.width, r.height);
     camera.aspect = r.width / Math.max(1, r.height);
     camera.updateProjectionMatrix();
   }
